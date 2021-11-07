@@ -20,6 +20,7 @@
 
       devShell.${system} = pkgs.mkShell rec {
         buildInputs = [
+          pkgs.gwenview
           (fhsCommand "julia" "julia")
           (fhsCommand "julia-bash" "bash")
         ];
