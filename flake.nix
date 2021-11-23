@@ -21,7 +21,7 @@
       devShell.${system} = pkgs.mkShell rec {
         buildInputs = [
           pkgs.aria
-          pkgs.gwenview
+          pkgs.qgis
           (fhsCommand "julia" "julia")
           (fhsCommand "julia-bash" "bash")
         ];
