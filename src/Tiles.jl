@@ -2,6 +2,7 @@ module Tiles
 
 export generateTiles
 export generateImageTile
+export allVessels
 
 using GeoArrays
 using DataFrames
@@ -38,24 +39,26 @@ function generateTiles(width::Int, overlap::Int, ga::GeoArray)::TileCollection
 end
 
 "Find pixels of vessels in given GeoArray"
-function allVessels(ga::GeoArray, df::DataFrame)::Array{(Int, Int),1}
+function allVessels(ga::GeoArray, df::DataFrame)::Array{Tuple{Int, Int},1}
   (x_max, y_max, _bands) = size(ga.A)
   vessels = @pipe [(d.detect_lat, d.detect_lon, 0.0) for d in eachrow(df[(df.is_vessel .!== missing) .& (df.is_vessel .== true), :])] .|>
               LLA(_ ...) .|>
               UTMZfromLLA(wgs84) .|>
               indices(ga, (_.x, _.y)) .|>
               (xy -> (xy[1], xy[2])) |>
-              filter((x, y) -> 1 <= x && x <= x_max && 1 <= y && y <= y_max, _)
+              filter(((x, y),) -> 1 <= x && x <= x_max && 1 <= y && y <= y_max, _)
   return vessels
 end
 
 "For a given tile, generate the image of the distribution given the ground truth data."
 function generateImageTile(ga::GeoArray, df::DataFrame)::Array{Float32,2}
+  (x_max, y_max, _bands) = size(ga.A)
   vessels = allVessels(ga, df)
   result = zeros(Float32, x_max, y_max)
   for xy in vessels
-    result[xy ...] = 1.0
+    result[xy...] = 1.0
   end
+  return result
 end
 
 "Sample tile by applying symmetries."
