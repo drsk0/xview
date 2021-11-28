@@ -11,12 +11,17 @@ using Pipe
 using Rotations
 using ImageTransformations
 using CoordinateTransformations
+using GeoEstimation
+using GeoStatsBase
+using Meshes
 
 const TileCollection = Array{GeoArray,1}
 
 "Subdivide TIFF into overlapping tiles of a given width and minimal overlap."
 function generateTiles(width::Int, overlap::Int, ga::GeoArray)::TileCollection
   (x, y) = size(ga.A)
+  # TODO replace missing values with 0. Should we do something different?
+  ga.A[ismissing.(ga.A)] .= 0
   x_nr = 1
   x_actual_overlap = 0
   while (x_actual_overlap < overlap)
@@ -36,6 +41,22 @@ function generateTiles(width::Int, overlap::Int, ga::GeoArray)::TileCollection
               begin:end] for i = 0:x_nr - 1 for j = 0:y_nr - 1]
 
   return tiles
+end
+
+"Take the low resolution batymetry tif and rescale to a given GeoArray via coordinates"
+function generateBatimetryTile(ga::GeoArray, gaBat::GeoArray)::GeoArray
+  (x, y, bands) = size(ga.A)
+  ret = GeoArray(Array{Union{Missing, Float32}}(missing, x, y))
+  CartesianIndices(ga.A[:,:,1]) .|> begin
+    pixel -> coords(ga, Tuple(pixel)) |>
+    c -> indices(gaBat, [c[1], c[2]]) |>
+    pixelPrim ->
+    if checkbounds(Bool, gaBat.A, [Tuple(pixelPrim)..., 1])
+        ret[Tuple(pixel) ..., 1] = gaBat[pixelPrim ..., 1]
+      end
+    end
+  interpolate!(ret)
+  return ret
 end
 
 "Find pixels of vessels in given GeoArray"
@@ -95,5 +116,21 @@ end
 function rotations(vessels::Array{Tuple{Int,Int},1}, n::Int, r::Float32)::Array{LocalRotation,1}
   phis = [0:2.0 * pi / n:2 * pi]
   [LocalRotation(v, r, Angle2d(phi)) for v in vessels for phi in phis]
+end
+
+"""Interpolate missing values in GeoArray."""
+function interpolate!(ga::GeoArray, band=1)
+    data = @view ga.A[:,:,band]
+    problemdata = georef(
+        (;band=data,),
+        origin=Tuple(ga.f.translation),
+        spacing=(abs(ga.f.linear[1]), abs(ga.f.linear[4]))
+    )
+    dom = LinearIndices(size(data))[ismissing.(data)]
+    problem = EstimationProblem(problemdata, view(problemdata.domain, dom), :band)
+    solution = solve(problem, IDW(:band => (neighbors=3,)))
+
+    data[dom] .= solution[:band][:mean]
+    return ga
 end
 end
