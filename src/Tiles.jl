@@ -19,22 +19,22 @@ const TileCollection = Array{GeoArray,1}
 
 "Subdivide TIFF into overlapping tiles of a given width and minimal overlap."
 function generateTiles(width::Int, overlap::Int, ga::GeoArray)::TileCollection
-  (x, y) = size(ga.A)
-  # TODO replace missing values with 0. Should we do something different?
-  ga.A[ismissing.(ga.A)] .= 0
-  x_nr = 1
-  x_actual_overlap = 0
-  while (x_actual_overlap < overlap)
-    x_nr = x_nr + 1
-    x_actual_overlap = cld(x_nr * width - x, x_nr - 1)
+  function nrTiles(sideLength::Int)::Tuple{Int, Int}
+    x_nr = 1
+    x_actual_overlap = 0
+    while (x_actual_overlap < overlap)
+      x_nr = x_nr + 1
+      x_actual_overlap = cld(x_nr * width - sideLength, x_nr - 1)
+    end
+    return (x_nr, x_actual_overlap)
   end
 
-  y_nr = 1
-  y_actual_overlap = 0
-  while (y_actual_overlap < overlap)
-    y_nr = y_nr + 1
-    y_actual_overlap = cld(y_nr * width - y, y_nr - 1)
-  end
+  # TODO replace missing values with 0. Should we do something different?
+  ga.A[ismissing.(ga.A)] .= 0
+
+  (x, y) = size(ga.A)
+  (x_nr, x_actual_overlap) = nrTiles(x)
+  (y_nr, y_actual_overlap) = nrTiles(y)
 
   tiles = [ga[1 + i * (width - x_actual_overlap):i * (width - x_actual_overlap) + width,
               1 + j * (width - y_actual_overlap):j * (width - y_actual_overlap) + width,
@@ -46,16 +46,16 @@ end
 "Take the low resolution batymetry tif and rescale to a given GeoArray via coordinates"
 function generateBatimetryTile(ga::GeoArray, gaBat::GeoArray)::GeoArray
   (x, y, bands) = size(ga.A)
+  interpolate!(gaBat)
   ret = GeoArray(Array{Union{Missing, Float32}}(missing, x, y))
   CartesianIndices(ga.A[:,:,1]) .|> begin
-    pixel -> coords(ga, Tuple(pixel)) |>
-    c -> indices(gaBat, [c[1], c[2]]) |>
+    pixel -> coords(ga, [pixel[1], pixel[2]]) |>
+    c -> GeoArrays.indices(gaBat, [c[1], c[2]]) |>
     pixelPrim ->
     if checkbounds(Bool, gaBat.A, [Tuple(pixelPrim)..., 1])
-        ret[Tuple(pixel) ..., 1] = gaBat[pixelPrim ..., 1]
+        ret.A[Tuple(pixel) ..., 1] = gaBat.A[pixelPrim ..., 1]
       end
     end
-  interpolate!(ret)
   return ret
 end
 
@@ -98,7 +98,7 @@ struct LocalRotation
 end
 
 "Apply a local rotation. TODO check for out of bounds radii."
-function (rot::LocalRotation)(x::Array{Float32,2})::Array{Float32,2}
+function(rot::LocalRotation)(x::Array{Float32,2})::Array{Float32,2}
   (c_x, c_y) = rot.center
   r = rot.r
   x_window = x[c_x - r:c_x + r, c_y - r:c_y + r]
@@ -127,7 +127,7 @@ function interpolate!(ga::GeoArray, band=1)
         spacing=(abs(ga.f.linear[1]), abs(ga.f.linear[4]))
     )
     dom = LinearIndices(size(data))[ismissing.(data)]
-    problem = EstimationProblem(problemdata, view(problemdata.domain, dom), :band)
+    problem = EstimationProblem(problemdata, view(domain(problemdata), dom), :band)
     solution = solve(problem, IDW(:band => (neighbors=3,)))
 
     data[dom] .= solution[:band][:mean]

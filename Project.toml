@@ -1,0 +1,11 @@
+name = "Xview"
+uuid = "4af35133-dfef-4cf1-aefc-046ad4cfdb4e"
+authors = ["drsk <drsk@lavabit.com>"]
+version = "0.1.0"
+
+[deps]
+BSON = "fbb218c0-5317-5bc6-957e-2ee96dd4b1f0"
+Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
+GeoArrays = "2fb1d81b-e6a0-5fc5-82e6-8e06903437ab"
+GeoStats = "dcc97b0b-8ce5-5539-9008-bb190f959ef6"
+UNet = "0d73aaa9-994a-4556-95d0-da67cb772a03"
