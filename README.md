@@ -1,5 +1,7 @@
-Julia Development Environment
+xView3: Dark Vessels Solution 
 =============================
 
-A nix flake for Julia development. This uses the FHS provided by
-www.github.com:olynch/scientific-fhs.git.
+This is my solution for the xView3 dark vessel detection competition https://iuu.xview.us/ using SAR
+satellite image data.
+
+Very much work in progress.
