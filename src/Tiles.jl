@@ -48,7 +48,7 @@ function generateTiles(width::Int, overlap::Int, ga::GeoArray)::TileCollection
 end
 
 "Take the low resolution batymetry tif and rescale to a given GeoArray via coordinates"
-function generateBatimetryTile(ga::GeoArray, gaBat::GeoArray)::GeoArray
+function generateBathymetryTile(ga::GeoArray, gaBat::GeoArray)::GeoArray
     (x, y, bands) = size(ga.A)
     (xBat, yBat) = size(gaBat.A)
     interpolate!(gaBat)
