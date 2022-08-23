@@ -15,44 +15,14 @@ using GeoEstimation
 using GeoStatsBase
 using Meshes
 
-const TileCollection = Array{GeoArray,1}
-
-"Subdivide TIFF into overlapping tiles of a given width and minimal overlap."
-function generateTiles(width::Int, overlap::Int, ga::GeoArray)::TileCollection
-    function nrTiles(sideLength::Int)::Tuple{Int,Int}
-        x_nr = 1
-        x_actual_overlap = 0
-        while (x_actual_overlap < overlap)
-            x_nr = x_nr + 1
-            x_actual_overlap = cld(x_nr * width - sideLength, x_nr - 1)
-        end
-        return (x_nr, x_actual_overlap)
-    end
-
-    # TODO replace missing values with 0. Should we do something different?
-    ga.A[ismissing.(ga.A)] .= 0
-
-    (x, y) = size(ga.A)
-    (x_nr, x_actual_overlap) = nrTiles(x)
-    (y_nr, y_actual_overlap) = nrTiles(y)
-
-    tiles = [
-        ga[
-            1+i*(width-x_actual_overlap):i*(width-x_actual_overlap)+width,
-            1+j*(width-y_actual_overlap):j*(width-y_actual_overlap)+width,
-            begin:end,
-        ] for i = 0:x_nr-1 for j = 0:y_nr-1
-    ]
-
-    return tiles
-end
-
 "Take the low resolution batymetry tif and rescale to a given GeoArray via coordinates"
 function generateBathymetryTile(ga::GeoArray, gaBat::GeoArray)::GeoArray
     (x, y, bands) = size(ga.A)
     (xBat, yBat) = size(gaBat.A)
     interpolate!(gaBat)
-    ret = GeoArray(Array{Union{Missing,Float32}}(missing, x, y))
+    ret = GeoArray(Array{Union{Missing,Float32},3}(missing, x, y, bands))
+    ret.crs = ga.crs
+    ret.f = ga.f
     CartesianIndices(ga.A[:, :, 1]) .|> begin
         pixel -> begin
             coords(ga, [pixel[1], pixel[2]]) |>
@@ -72,13 +42,13 @@ function allVessels(ga::GeoArray, df::DataFrame)::Array{Tuple{Int,Int},1}
     (x_max, y_max, _bands) = size(ga.A)
     vessels = @pipe [
               (d.detect_lat, d.detect_lon, 0.0) for
-              d in eachrow(df[(df.is_vessel.!==missing).&(df.is_vessel.==true), :])
+              d in eachrow(filter(x -> x.is_vessel !== missing && x.is_vessel == true, df))
           ] .|>
           LLA(_...) .|>
           UTMZfromLLA(wgs84) .|>
-          indices(ga, (_.x, _.y)) .|>
-          (xy -> (xy[1], xy[2])) |>
-          filter(((x, y),) -> 1 <= x && x <= x_max && 1 <= y && y <= y_max, _)
+          GeoArrays.indices(ga, (_.x, _.y)) .|>
+          (xy -> return (xy[1], xy[2])) |>
+          filter(((x, y),) -> 1 <= x <= x_max && 1 <= y <= y_max, _)
     return vessels
 end
 
