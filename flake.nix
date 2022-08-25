@@ -13,7 +13,7 @@
 
 
       fhsCommand = pkgs.callPackage ./scientific-fhs {
-          juliaVersion = "julia_16";
+          juliaVersion = "julia_18";
       };
     in
     {
