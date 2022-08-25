@@ -21,21 +21,20 @@ include("Tiles.jl")
 const TrainData = Tuple{Array{Float32,4},Array{Float32,4}}
 
 function loss(x, y)
-    op = clamp.(u(x), 0.001f0, 1.0f0)
-    Flux.Losses.logitbinarycrossentropy(op, y, agg = sum)
+    Flux.Losses.logitbinarycrossentropy(u(x), y, agg = sum)
 end
 
 # we keep track of the evolution of the accuracy
 accuracy_history = Vector{Float32}(undef, 0)
 function accuracy(data::Vector{TrainData})
     x = mean(data .|> x -> loss(x...))
-    push!(vector, x)
+    push!(accuracy_history, x)
     return x
 end
 
 function evalCallback(data)
     Flux.throttle(30) do
-        @show accuracy(data)
+        @info accuracy(data)
         @save "model-checkpoint.bson" u
     end
 end
@@ -175,7 +174,7 @@ function unetTrain(dataDir::String, batchSize::Int, tileSize::Int)
     opt = Momentum()
 
     dataDirs = getDataDirs(dataDir)
-    @show dataDirs
+    @info dataDirs
 
     data = Vector{TrainData}(undef, 0)
     epochCounter = 0
@@ -188,18 +187,15 @@ function unetTrain(dataDir::String, batchSize::Int, tileSize::Int)
             gaBat = GeoArrays.read(gaTileName(fp, "bathymetry", i))
             @load imgTileName(fp, "image", i) im
             img = im
-
-            (x, y) = size(gaV.A)
-
             tiles = TileIterator(axes(gaV.A[:, :, 1]), RelaxStride((tileSize, tileSize)))
-            for i in tiles
-                tV = gaV[i..., 1]
-                tH = gaH[i..., 1]
-                tBat = gaB[i..., 1]
-                im = reshape(img[i...], tileSize, tileSize, 1, 1)
-                # if count(x -> x == 1.0, im) == 0
-                #     break;
-                # end
+            for j in tiles
+                tV = gaV[j..., 1]
+                tH = gaH[j..., 1]
+                tBat = gaBat[j..., 1]
+                im = reshape(img[j...], tileSize, tileSize, 1, 1)
+                if count(x -> x == 1.0, im) == 0
+                    continue;
+                end
                 ret = zeros(Float32, tileSize, tileSize, 3, 1)
                 ret[:, :, 1, 1] = tV[:, :]
                 ret[:, :, 2, 1] = tH[:, :]

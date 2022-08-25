@@ -6,9 +6,9 @@ export allVessels
 
 using GeoArrays
 using DataFrames
-using Geodesy
+# using Geodesy
 using Pipe
-using ImageTransformations
+# using ImageTransformations
 using CoordinateTransformations
 using GeoEstimation
 using GeoStatsBase
@@ -40,8 +40,8 @@ end
 function allVessels(ga::GeoArray, df::DataFrame)::Array{Tuple{Int,Int},1}
     (x_max, y_max, _bands) = size(ga.A)
     vessels = @pipe [
-              (d.detect_lat, d.detect_lon, 0.0) for d in
-              eachrow(filter(x -> x.is_vessel !== missing && x.is_vessel == true, df))
+              (d.detect_lat, d.detect_lon, 0.0) for
+              d in eachrow(filter(x -> x.is_vessel !== missing && x.is_vessel == true, df))
           ] .|>
           LLA(_...) .|>
           UTMZfromLLA(wgs84) .|>
