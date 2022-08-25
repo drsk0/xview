@@ -12,6 +12,9 @@ using BSON: @save, @load
 using Pipe
 using Base.Iterators
 using Base.Threads
+using ImageDraw
+using TiledIteration
+using ColorTypes
 
 include("Tiles.jl")
 
@@ -19,11 +22,15 @@ const TrainData = Tuple{Array{Float32,4},Array{Float32,4}}
 
 function loss(x, y)
     op = clamp.(u(x), 0.001f0, 1.0f0)
-    mean(bce(op, y))
+    Flux.Losses.logitbinarycrossentropy(op, y, agg = sum)
 end
 
+# we keep track of the evolution of the accuracy
+accuracy_history = Vector{Float32}(undef, 0)
 function accuracy(data::Vector{TrainData})
-    return mean(data .|> x -> loss(x...))
+    x = mean(data .|> x -> loss(x...))
+    push!(vector, x)
+    return x
 end
 
 function evalCallback(data)
@@ -60,7 +67,7 @@ function processGAs(csv::DataFrame, subDir::String)
             GeoArrays.write!(gaTileName(subDir, relPath, i), ga)
         end
     end
-    
+
     imgs = reshape(partition(img), (1, 16))
     for (i, im) in zip(1:16, imgs)
         mkpath(joinpath(subDir, "processed"))
@@ -81,21 +88,21 @@ end
 
 # Paritition a GeoArray in 16 tiles.
 function partitionGA(ga::GeoArray)::Matrix{Array{Union{Missing,Float32},3}}
-    ret = Matrix{Array{Union{Missing, Float32}, 3}}(undef, (4, 4))
+    ret = Matrix{Array{Union{Missing,Float32},3}}(undef, (4, 4))
     (x, y, z) = size(ga)
     for i = 1:4
         for j = 1:4
             ret[i, j] = ga[
                 begin+(i-1)*div(x, 4):begin+i*div(x, 4),
                 begin+(j-1)*div(y, 4):begin+j*div(y, 4),
-                begin:end
+                begin:end,
             ]
         end
     end
     return ret
 end
 
-function partition(xs::Matrix{T})::Matrix{Matrix{T}} where T
+function partition(xs::Matrix{T})::Matrix{Matrix{T}} where {T}
     ret = Matrix{Matrix{T}}(undef, (4, 4))
     (x, y) = size(xs)
     for i = 1:4
@@ -115,6 +122,54 @@ function getDataDirs(dataDir::String)::Vector{String}
           filter(fp -> isdir(fp) && !endswith(fp, "shoreline"), _)
 end
 
+function selectTile(ga::GeoArray, i::Int, j::Int)::Array{Union{Missing,Float32},3}
+    return @view ga.A[1+i*tileSize:(i+1)*tileSize, 1+j*tileSize:(j+1)*tileSize, begin:end]
+end
+
+function selectImg(img::Matrix{Float32}, i::Int, j::Int)::Matrix{Float32}
+    return @view img[1+i*tileSize:(i+1)*tileSize, 1+j*tileSize:(j+1)*tileSize]
+end
+
+function drawBoxes(ga::GeoArray, img::Matrix{Float32})::GeoArray
+    c = maximum(ga.A[:, :, 1]) + 20.0f0
+    ret = Gray.(ga.A[:, :, 1])
+    for (x, y) in [(i[1], i[2]) for i = CartesianIndices(ret) if ret[Tuple(i)...] > 0.7]
+        draw!(
+            ret,
+            Polygon(RectanglePoints(Point(x - 10, y - 10), Point(x + 10, y + 10))),
+            Gray(c),
+        )
+    end
+    ret = GeoArray(gray.(ret))
+    ret.f = ga.f
+    ret.crs = ga.crs
+    return ret
+end
+
+function applyU(
+    u::Unet,
+    tileSize::Int,
+    gaV::GeoArray,
+    gaH::GeoArray,
+    bat::GeoArray,
+)::Matrix{Float32}
+    tiles = TileIterator(axes(gaV.A[:, :, 1]), RelaxStride((tileSize, tileSize)))
+    (x, y, z) = size(gaV)
+    ret = Matrix{Float32}(undef, x, y)
+    for t in tiles
+        ret[t...] = u(
+            reshape(
+                hcat(gaV.A[t..., 1], gaH.A[t..., 1], bat.A[t..., 1]),
+                tileSize,
+                tileSize,
+                3,
+                1,
+            ),
+        )
+    end
+    return ret
+end
+
 u = Unet(3, 1)
 function unetTrain(dataDir::String, batchSize::Int, tileSize::Int)
     opt = Momentum()
@@ -123,6 +178,7 @@ function unetTrain(dataDir::String, batchSize::Int, tileSize::Int)
     @show dataDirs
 
     data = Vector{TrainData}(undef, 0)
+    epochCounter = 0
 
     for fp in dataDirs
         for i = 1:16
@@ -135,57 +191,30 @@ function unetTrain(dataDir::String, batchSize::Int, tileSize::Int)
 
             (x, y) = size(gaV.A)
 
-            function selectTile(ga::GeoArray, i::Int, j::Int)
-                return @view ga.A[
-                    1+i*tileSize:(i+1)*tileSize,
-                    1+j*tileSize:(j+1)*tileSize,
-                    begin:end,
-                ]
-            end
-            
-            function selectImg(img::Matrix{Float32}, i::Int, j::Int)
-                return @view img[
-                    1+i*tileSize:(i+1)*tileSize,
-                    1+j*tileSize:(j+1)*tileSize,
-                    ]
-            end
+            tiles = TileIterator(axes(gaV.A[:, :, 1]), RelaxStride((tileSize, tileSize)))
+            for i in tiles
+                tV = gaV[i..., 1]
+                tH = gaH[i..., 1]
+                tBat = gaB[i..., 1]
+                im = reshape(img[i...], tileSize, tileSize, 1, 1)
+                # if count(x -> x == 1.0, im) == 0
+                #     break;
+                # end
+                ret = zeros(Float32, tileSize, tileSize, 3, 1)
+                ret[:, :, 1, 1] = tV[:, :]
+                ret[:, :, 2, 1] = tH[:, :]
+                ret[:, :, 3, 1] = tBat[:, :]
 
-            for i in countfrom(0)
-                if ((i + 1) * tileSize > x)
-                    break
+                if (length(data) < batchSize)
+                    push!(data, (ret, im))
                 else
-                    for j in countfrom(0)
-                        if ((j + 1) * tileSize > y)
-                            break
-                        else
-
-                            tV = selectTile(gaV, i, j)
-                            tH = selectTile(gaH, i, j)
-                            tBat = selectTile(gaBat, i, j)
-                            im = reshape(selectImg(img, i, j), tileSize, tileSize, 1, 1)
-                            ret = zeros(Float32, tileSize, tileSize, 3, 1)
-                            ret[:, :, 1, 1] = tV[:, :]
-                            ret[:, :, 2, 1] = tH[:, :]
-                            ret[:, :, 3, 1] = tBat[:, :]
-
-                            if (length(data) < batchSize)
-                                push!(data, (ret, im))
-                            else
-                                println("training epoch!")
-                                Flux.train!(
-                                    loss,
-                                    Flux.params(u),
-                                    data,
-                                    opt,
-                                    cb = evalCallback(data),
-                                )
-                                empty!(data)
-                            end
-                        end
-                    end
+                    epochCounter = epochCounter + 1
+                    println("starting training epoch $(epochCounter)")
+                    Flux.train!(loss, Flux.params(u), data, opt, cb = evalCallback(data))
+                    empty!(data)
                 end
-
             end
+
 
         end
 

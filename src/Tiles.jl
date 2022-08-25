@@ -8,7 +8,6 @@ using GeoArrays
 using DataFrames
 using Geodesy
 using Pipe
-using Rotations
 using ImageTransformations
 using CoordinateTransformations
 using GeoEstimation
@@ -41,8 +40,8 @@ end
 function allVessels(ga::GeoArray, df::DataFrame)::Array{Tuple{Int,Int},1}
     (x_max, y_max, _bands) = size(ga.A)
     vessels = @pipe [
-              (d.detect_lat, d.detect_lon, 0.0) for
-              d in eachrow(filter(x -> x.is_vessel !== missing && x.is_vessel == true, df))
+              (d.detect_lat, d.detect_lon, 0.0) for d in
+              eachrow(filter(x -> x.is_vessel !== missing && x.is_vessel == true, df))
           ] .|>
           LLA(_...) .|>
           UTMZfromLLA(wgs84) .|>
@@ -61,51 +60,6 @@ function generateImageTile(ga::GeoArray, df::DataFrame)::Array{Float32,2}
         result[xy...] = 1.0
     end
     return result
-end
-
-"Sample tile by applying symmetries."
-function sampleTileWithSymmetry(
-    ga::GeoArray,
-    df::DataFrame,
-    n::Int,
-    r::Int,
-)::(TyleCollection, Array{Float32,2})
-    image = generateImageTile(ga, df)
-    transformations = [identity rotations(ga, df, n, r)...]
-    tiles = [t(ga.A) for t in transformations]
-    return (tiles, image)
-end
-
-struct LocalRotation
-    center::Tuple{Int,Int}
-    r::Int
-    rot::Angle2d
-
-end
-
-"Apply a local rotation. TODO check for out of bounds radii."
-function (rot::LocalRotation)(x::Array{Float32,2})::Array{Float32,2}
-    (c_x, c_y) = rot.center
-    r = rot.r
-    x_window = x[c_x-r:c_x+r, c_y-r:c_y+r]
-    rotation = recenter(rot.rot, center(x_window))
-    warped = no_offset_view(warp(x_window, rotation))
-    (w_x, w_y) = center(warped)
-    y = copy(x)
-    y[c_x-r:c_x+r, c_y-r:c_y+r] = warped[w_x-r:w_x+r, w_y-r:w_y+r]
-    nans = findall(isnan, y)
-    y[nans] = x[nans]
-    return y
-end
-
-"Compute rotations around vessels"
-function rotations(
-    vessels::Array{Tuple{Int,Int},1},
-    n::Int,
-    r::Float32,
-)::Array{LocalRotation,1}
-    phis = [0:2.0*pi/n:2*pi]
-    [LocalRotation(v, r, Angle2d(phi)) for v in vessels for phi in phis]
 end
 
 """Interpolate missing values in GeoArray."""
