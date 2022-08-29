@@ -11,10 +11,10 @@ using BSON: @save, @load
 using Pipe
 using Base.Iterators
 using Base.Threads
-using ImageDraw
 using TiledIteration
-using ColorTypes
 using Rasters
+using Plots
+import DimensionalData.Dimensions.LookupArrays as DD
 
 const TrainData = Tuple{Array{Float32,4},Array{Float32,4}}
 
@@ -63,7 +63,7 @@ function generateImage(ga::Raster{Float32, 3}, vessels::SubDataFrame)::Raster{Fl
     xs = result.data
     xs .= 0.0
     for r in eachrow(vessels)
-        xs[r.detect_scene_row, r.detect_scene_column, 1] = 1.0
+        xs[r.detect_scene_column, r.detect_scene_row, 1] = 1.0
     end
     return result
 end
@@ -74,22 +74,21 @@ function getDataDirs(dataDir::String)::Vector{String}
           filter(fp -> isdir(fp) && !endswith(fp, "shoreline"), _)
 end
 
-function drawBoxes(ga::Raster{Float32, 3}, img::Raster{Float32, 3})::Raster{Float32, 3}
-    tmp = copy(ga)
-    xs = ga.data
-    ys = img.data
-    c = maximum(xs) + 20.0f0
-    ret = Gray.(xs[:, :, 1])
-    for (x, y) in [(i[1], i[2]) for i = CartesianIndices(ret) if ys[Tuple(i)...] > 0.9]
-        draw!(
-            ret,
-            Ellipse(CirclePointRadius(x, y, 20; fill = true)),
-            Gray(c),
-        )
-    end
-    tmp.data[:,:,1] = gray.(ret)
-
-    return tmp
+function drawBoxes(ga::Raster{Float32, 3}, img::Raster{Float32, 3}, treeshold::Float32)::Plots.Plot
+    x_dim, y_dim = dims(ga)[1], dims(ga)[2]
+    x_sign = DD.order(x_dim) isa DD.ForwardOrdered ? 1 : -1 
+    y_sign = DD.order(y_dim) isa DD.ForwardOrdered ? 1 : -1 
+    (xbounds, ybounds, zbounds) = bounds(ga)
+    xbound = DD.order(x_dim) isa DD.ForwardOrdered ? xbounds[1] : xbounds[2]
+    ybound = DD.order(y_dim) isa DD.ForwardOrdered ? ybounds[1] : ybounds[2]
+    (xsize, ysize, zsize) = size(ga)
+    xfactor = (xbounds[2] - xbounds[1]) / xsize
+    yfactor = (ybounds[2] - ybounds[1]) / ysize
+    vessels = findall(x -> x > treeshold, img[:,:,1])
+    vessels_cords = [(x_sign * xfactor, y_sign * yfactor) .* (v.I[1], v.I[2]) .+ (xbound, ybound) for v in vessels]
+    p = plot(ga)
+    scatter!(p, vessels_cords; legend=:none, markercolor=:black, markerstrokewidth=10, markerstrokealpha=1.0, markershape=:rect, markeralpha=0.6)
+    return p
 end
 
 function applyU(
