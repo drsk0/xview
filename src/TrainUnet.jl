@@ -1,4 +1,4 @@
-module Train
+module TrainUnet
 
 using UNet
 using Flux
@@ -18,6 +18,9 @@ import Flux.Losses as L
 using LinearAlgebra
 using ThreadsX
 using LoopVectorization
+using ProgressMeter
+
+include("Utils.jl")
 
 const TrainData = Tuple{Array{Float32,4},Array{Float32,4}}
 
@@ -30,13 +33,12 @@ function weightedMean(xs, ws)
 end
 function loss(x, y)
     y_head = h.(u(x))
-    @info size(y)
     (xdim, ydim) = size(y)
     muS = xdim * ydim
     int_falpha = sum(y)
     int_fbeta = muS - int_falpha
-    alpha = int_falpha > 0.0 ? muS / ((1001/1000) * int_falpha) : 1.0
-    beta = int_fbeta > 0.0 ? (alpha * int_falpha) / (1000 * int_fbeta) : 1.0
+    alpha = int_falpha > 0.0 ? muS / (2 * int_falpha) : 1.0
+    beta = int_fbeta > 0.0 ? (alpha * int_falpha) / int_fbeta : 1.0
     ws = alpha * y .+ beta * (1.0 .- y)
     return L.logitbinarycrossentropy(y_head, y; agg = xs -> weightedMean(xs, ws))
 end
@@ -44,9 +46,7 @@ end
 # we keep track of the evolution of the accuracy
 accuracy_history = Vector{Float32}(undef, 0)
 function accuracy(data::Vector{TrainData})
-    xs = data .|> x -> loss(x...)
-    x = mean(xs)
-    @info "Losses: $(xs)"
+    x = mean(data .|> x -> loss(x...))
     push!(accuracy_history, x)
     return x
 end
@@ -55,7 +55,7 @@ function evalCallback(data)
     Flux.throttle(60) do
         acc = accuracy(data)
         @info "Mean loss: $(acc)"
-        save_object("model-checkpoint_$(acc).jld2", u)
+        save_object("model-checkpoint.jld2", u)
     end
 end
 
@@ -67,7 +67,12 @@ function preprocessData(dataDir::String, tileSize::Int, alpha::Float32 = 0.1)
     end
 end
 
-function preprocessDir(subDir::String, csv::DataFrame, tileSize::Int = 128, alpha::Float32 = 0.1)
+function preprocessDir(
+    subDir::String,
+    csv::DataFrame,
+    tileSize::Int = 128,
+    alpha::Float32 = 0.1,
+)
     @info "Processing " * subDir
     id = last(splitpath(subDir))
     # TODO also filter for confidence level with in(["MEDIUM", "HIGH"]).(csv.confidence)
@@ -168,50 +173,6 @@ function drawBoxes(
     return p
 end
 
-# Apply a Unet, returning all pixel coordinates above a given threshold.
-function applyU(u::Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
-    tiles = TileIterator(axes(rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
-    x, y = size(rs[:VV_dB])[1], size(rs[:VV_dB])[2]
-    img = zeros(Float32, x, y)
-    for t in tiles
-        img[t...] = applyU(u, rs, t)
-    end
-    return img
-end
-
-const Tile = Tuple{UnitRange{Int},UnitRange{Int}}
-
-function applyU(u, rs::RasterStack, t::Tile)::Matrix{Float32}
-    tileSize = length(t[1])
-    u(
-        reshape(
-            hcat(
-                rs[:VV_dB].data[t..., 1],
-                rs[:VH_dB].data[t..., 1],
-                rs[:bathymetry_processed].data[t..., 1],
-            ),
-            tileSize,
-            tileSize,
-            3,
-            1,
-        ),
-    )[
-        :,
-        :,
-        1,
-        1,
-    ]
-end
-
-mutable struct Tiles
-    empty::Vector{Tile}
-    nonempty::Vector{Tile}
-end
-
-function Tiles()::Tiles
-    Tiles([], [])
-end
-
 function checkTiles(ts::Tiles, u::Unet, rs::RasterStack, tileSize::Int, threshold::Float64)
     function check(t::Tile)::Bool
         return any(x -> x > threshold, h.(applyU(u, rs, t)))
@@ -223,26 +184,29 @@ function checkTiles(ts::Tiles, u::Unet, rs::RasterStack, tileSize::Int, threshol
         return nothing
     else
         t = ts.nonempty[i]
-        return (h.(
-            u(
-                reshape(
-                    hcat(
-                        rs[:VV_dB].data[t..., 1],
-                        rs[:VH_dB].data[t..., 1],
-                        rs[:bathymetry_processed].data[t..., 1],
+        return (
+            h.(
+                u(
+                    reshape(
+                        hcat(
+                            rs[:VV_dB].data[t..., 1],
+                            rs[:VH_dB].data[t..., 1],
+                            rs[:bathymetry_processed].data[t..., 1],
+                        ),
+                        tileSize,
+                        tileSize,
+                        3,
+                        1,
                     ),
-                    tileSize,
-                    tileSize,
-                    3,
+                )[
+                    :,
+                    :,
                     1,
-                ),
-            )[
-                :,
-                :,
-                1,
-                1,
-            ]
-        ), i)
+                    1,
+                ]
+            ),
+            i,
+        )
     end
 end
 
@@ -277,13 +241,13 @@ function partitionTiles(fp::String, tileSize::Int)::Tiles
 end
 
 u = Unet(3, 1) |> cpu
-function train(
+function trainUnet(
     dataDir::String = "./data/train",
     batchSize::Int = 16,
     tileSize::Int = 128,
-    alpha::String = "025",
+    alpha::String = "01",
 )
-    opt = Adam()
+    opt = ADAM()
 
     imgfilename = "image_" * alpha
 
@@ -293,9 +257,8 @@ function train(
     @info "Tile size $(tileSize)"
     @info "alpha $(alpha)"
 
-    epochCounter = 0
-
     for fp in dataDirs
+        @info "Processing $(fp)"
         rs = RasterStack(
             (
                 x -> joinpath(fp, x)
@@ -309,30 +272,27 @@ function train(
         )
         tiles = load_object(joinpath(fp, "tiles_$(tileSize).jld2"))
         nonemptyTs = partition(tiles.nonempty, batchSize)
-        for ts in nonemptyTs
+        @showprogress 1 "Processing tiles" for ts in nonemptyTs
             data = TrainData[]
             for t in ts
                 ret = zeros(Float32, tileSize, tileSize, 3, 1)
                 ret[:, :, 1, 1] = rs[:VV_dB].data[t..., 1]
                 ret[:, :, 2, 1] = rs[:VH_dB].data[t..., 1]
                 ret[:, :, 3, 1] = rs[:bathymetry_processed].data[t..., 1]
-                img = reshape(
-                    rs[Symbol(imgfilename)].data[t..., 1],
-                    tileSize,
-                    tileSize,
-                    1,
-                    1,
-                )
+                img =
+                    reshape(rs[Symbol(imgfilename)].data[t..., 1], tileSize, tileSize, 1, 1)
                 push!(data, (ret, img))
             end
-
-            epochCounter = epochCounter + 1
-            @info "starting training epoch $(epochCounter)"
-            Flux.train!(loss, Flux.params(u), data, opt, cb = evalCallback(data))
+            Flux.@epochs 3 Flux.train!(
+                loss,
+                Flux.params(u),
+                data,
+                opt,
+                cb = evalCallback(data),
+            )
             empty!(data)
         end
     end
 
 end
-
 end #Train
