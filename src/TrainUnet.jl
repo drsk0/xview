@@ -173,7 +173,13 @@ function drawBoxes(
     return p
 end
 
-function checkTiles(ts::Utils.Tiles, u::Unet, rs::RasterStack, tileSize::Int, threshold::Float64)
+function checkTiles(
+    ts::Utils.Tiles,
+    u::Unet,
+    rs::RasterStack,
+    tileSize::Int,
+    threshold::Float64,
+)
     function check(t::Utils.Tile)::Bool
         return any(x -> x > threshold, h.(applyU(u, rs, t)))
     end
