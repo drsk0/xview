@@ -173,8 +173,8 @@ function drawBoxes(
     return p
 end
 
-function checkTiles(ts::Tiles, u::Unet, rs::RasterStack, tileSize::Int, threshold::Float64)
-    function check(t::Tile)::Bool
+function checkTiles(ts::Utils.Tiles, u::Unet, rs::RasterStack, tileSize::Int, threshold::Float64)
+    function check(t::Utils.Tile)::Bool
         return any(x -> x > threshold, h.(applyU(u, rs, t)))
     end
 
@@ -211,8 +211,8 @@ function checkTiles(ts::Tiles, u::Unet, rs::RasterStack, tileSize::Int, threshol
 end
 
 
-function partitionTiles(fp::String, tileSize::Int)::Tiles
-    tilesPerThread = repeat([Tiles()], Threads.nthreads())
+function partitionTiles(fp::String, tileSize::Int)::Utils.Tiles
+    tilesPerThread = repeat([Utils.Tiles()], Threads.nthreads())
     rs = RasterStack(
         (
             x -> joinpath(fp, x)
@@ -231,7 +231,7 @@ function partitionTiles(fp::String, tileSize::Int)::Tiles
         end
     end
 
-    res = Tiles()
+    res = Utils.Tiles()
     for ts in tilesPerThread
         append!(res.empty, ts.empty)
         append!(res.nonempty, ts.nonempty)
