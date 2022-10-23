@@ -4,8 +4,8 @@ stdenv.mkDerivation {
   name = "gr";
   src = fetchurl {
     url =
-      "https://github.com/sciapp/gr/releases/download/v0.48.0/gr-0.48.0-Linux-x86_64.tar.gz";
-    sha256 = "1a75kky2prwx1bhjpjikpvxvniz85k5i1xszpvdbnwyhgcq8nn57";
+      "https://github.com/sciapp/gr/releases/download/v0.69.1/gr-0.69.1-Linux-x86_64.tar.gz";
+    sha256 = "sha256-nNq4djmqvwQDF49WzdMvxHnU6CDdOJ9PUbNZfqbWLG8=";
   };
   installPhase = ''
     mkdir $out

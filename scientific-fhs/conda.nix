@@ -1,11 +1,11 @@
 { runCommand, fetchurl, makeWrapper, installationPath }:
 
 let
-  conda_version = "4.6.14";
+  conda_version = "4.7.12.1";
   conda_src = fetchurl {
     url =
       "https://repo.continuum.io/miniconda/Miniconda3-${conda_version}-Linux-x86_64.sh";
-    sha256 = "1gn43z1y5zw4yv93q1qajwbmmqs83wx5ls5x4i4llaciba4j6sqd";
+    sha256 = "sha256-v+NOH6KNbXWnrQX9AvpUcidWc9X1Yht3OAiY3uG+FdI=";
   };
 
 in runCommand "conda-install" { buildInputs = [ makeWrapper ]; } ''
