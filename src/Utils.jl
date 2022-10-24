@@ -1,8 +1,9 @@
 module Utils
 
 using Pipe
-using UNet
 using Rasters
+
+include("UNet.jl")
 
 const Tile = Tuple{UnitRange{Int},UnitRange{Int}}
 
@@ -23,7 +24,7 @@ end
 
 
 # Apply a Unet, returning all pixel coordinates above a given threshold.
-function applyU(u::Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
+function applyU(u::UNet.Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
     tiles = TileIterator(axes(rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
     x, y = size(rs[:VV_dB])[1], size(rs[:VV_dB])[2]
     img = zeros(Float32, x, y)

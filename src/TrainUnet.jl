@@ -1,6 +1,5 @@
 module TrainUnet
 
-using UNet
 using Flux
 using CSV
 using DataFrames
@@ -21,6 +20,7 @@ using LoopVectorization
 using ProgressMeter
 
 include("Utils.jl")
+include("UNet.jl")
 
 const TrainData = Tuple{Array{Float32,4},Array{Float32,4}}
 
@@ -175,7 +175,7 @@ end
 
 function checkTiles(
     ts::Utils.Tiles,
-    u::Unet,
+    u::UNet.Unet,
     rs::RasterStack,
     tileSize::Int,
     threshold::Float64,
@@ -246,7 +246,7 @@ function partitionTiles(fp::String, tileSize::Int)::Utils.Tiles
     return res
 end
 
-u = Unet(3, 1) |> cpu
+u = UNet.Unet(3, 1) |> cpu
 function trainUnet(
     dataDir::String = "./data/train",
     batchSize::Int = 16,
