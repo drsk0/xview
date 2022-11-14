@@ -67,7 +67,7 @@ let
       pango
       pango.out
       pdf2svg
-      qt5.full
+      qt5.qtbase
       systemd
       xorg.libICE
       xorg.libSM
