@@ -1,4 +1,4 @@
-module TrainUnet
+module TrainVit
 
 using Flux
 using CSV
@@ -7,6 +7,7 @@ using JLD2: save_object, load_object
 using CUDA
 using Pipe
 using Base.Iterators
+using Base.Threads
 using TiledIteration
 using Rasters
 using Plots
@@ -17,11 +18,13 @@ using LinearAlgebra
 using ThreadsX
 using LoopVectorization
 using ProgressMeter
-using Statistics
-using ..UNet
-using ..Utils
-import MLUtils as MLU
+using Metalhead
 
+using ..Utils
+using ..UNet
+
+
+const TrainData = Tuple{Array{Float32,4},Array{Float32,4}}
 
 function h(x)
     clamp(x, 0.001, 1.0)
@@ -44,13 +47,13 @@ end
 
 # we keep track of the evolution of the accuracy
 accuracy_history = Vector{Float32}(undef, 0)
-function accuracy(data::MLU.DataLoader)
-    x = mean(reduce(vcat, [first(data) for i = 1:20]) .|> x -> loss(x...))
+function accuracy(data::Vector{TrainData})
+    x = mean(data .|> x -> loss(x...))
     push!(accuracy_history, x)
     return x
 end
 
-function evalCallback(data::MLU.DataLoader)
+function evalCallback(data)
     Flux.throttle(60) do
         acc = accuracy(data)
         @info "Mean loss: $(acc)"
@@ -118,6 +121,12 @@ function generateImage(
     return result
 end
 
+# Return all filepath pointing to a data directory.
+function getDataDirs(dataDir::String)::Vector{String}
+    @pipe readdir(dataDir, join = true) |>
+          filter(fp -> isdir(fp) && !endswith(fp, "shoreline"), _)
+end
+
 # Plot a raster together with the marked vessel positions.
 function drawBoxes(
     ga::Raster{Float32,3},
@@ -166,95 +175,133 @@ function drawBoxes(
     return p
 end
 
-u = UNet.Unet(3, 1) |> cpu
-
-struct SatelliteData
-    rs::RasterStack
-    tiles::Tiles
-    tileSize::Int
-end
-export SatelliteData
-
-function getSatelliteData(fp::String, tileSize::Int)::Tuple{SatelliteData,SatelliteData}
-    ts = load_object(joinpath(fp, "tiles_$(tileSize).jld2"))
-    return (
-        SatelliteData(
-            RasterStack(
-                (
-                    x -> joinpath(fp, x)
-                ).(["VV_dB.tif", "VH_dB.tif", "bathymetry_processed.tif"]);
-                lazy = true,
-            ),
-            ts,
-            tileSize,
-        ),
-        SatelliteData(
-            RasterStack([joinpath(fp, "image_01.tif")]; lazy = true),
-            ts,
-            tileSize,
-        ),
-    )
-end
-
-function MLU.numobs(sd::SatelliteData)
-    return length(sd.tiles.nonempty)
-end
-
-function MLU.getobs(sd::SatelliteData, i::Int)
-    t = sd.tiles.nonempty[i]
-    ret = zeros(Float32, sd.tileSize, sd.tileSize, length(sd.rs))
-    for (i, layer) in enumerate(propertynames(sd.rs.layermetadata))
-        ret[:, :, i] = sd.rs[layer].data[t..., 1]
+function checkTiles(
+    ts::Utils.Tiles,
+    u::UNet.Unet,
+    rs::RasterStack,
+    tileSize::Int,
+    threshold::Float64,
+)
+    function check(t::Utils.Tile)::Bool
+        return any(x -> x > threshold, h.(applyU(u, rs, t)))
     end
-    return ret
+
+    # ThreadsX.findfirst seems buggy and returns something even when the condition is not met.
+    i = findfirst(check, ts.nonempty)
+    if isnothing(i)
+        return nothing
+    else
+        t = ts.nonempty[i]
+        return (
+            h.(
+                u(
+                    reshape(
+                        hcat(
+                            rs[:VV_dB].data[t..., 1],
+                            rs[:VH_dB].data[t..., 1],
+                            rs[:bathymetry_processed].data[t..., 1],
+                        ),
+                        tileSize,
+                        tileSize,
+                        3,
+                        1,
+                    ),
+                )[
+                    :,
+                    :,
+                    1,
+                    1,
+                ]
+            ),
+            i,
+        )
+    end
 end
 
-struct MultipleSatelliteData
-    satData::Vector{SatelliteData}
-    ixRanges::Vector{Int}
+
+function partitionTiles(fp::String, tileSize::Int)::Utils.Tiles
+    tilesPerThread = repeat([Utils.Tiles()], Threads.nthreads())
+    rs = RasterStack(
+        (
+            x -> joinpath(fp, x)
+        ).(["VV_dB.tif", "VH_dB.tif", "bathymetry_processed.tif", "image.tif"]);
+        lazy = true,
+    )
+    tiles = TileIterator(axes(@view rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
+    @threads for j in tiles
+        tId = Threads.threadid()
+        ts = tilesPerThread[tId]
+        t = @view rs[j..., 1]
+        if any(t[:image] .== 1.0)
+            push!(ts.nonempty, j)
+        else
+            push!(ts.empty, j)
+        end
+    end
+
+    res = Utils.Tiles()
+    for ts in tilesPerThread
+        append!(res.empty, ts.empty)
+        append!(res.nonempty, ts.nonempty)
+    end
+
+    return res
 end
-export MultipleSatelliteData
 
-function MultipleSatelliteData(satData::Vector{SatelliteData})::MultipleSatelliteData
-    return MultipleSatelliteData(satData, accumulate(+, satData .|> MLU.numobs))
-end
+t = Metalhead.vit((128, 128), inchannels = 3, nclasses = 2)
 
-function MLU.numobs(sds::MultipleSatelliteData)::Int
-    return isempty(sds.ixRanges) ? 0 : last(sds.ixRanges)
-end
-
-function MLU.getobs(sds::MultipleSatelliteData, i::Int)
-    ix = searchsortedfirst(sds.ixRanges, i)
-    ix0 = ix == 1 ? 0 : sds.ixRanges[ix-1]
-    return MLU.getobs(sds.satData[ix], i - ix0)
-end
-
-
-function trainUnet(
+function trainTransformer(
     dataDir::String = "./data/train",
     batchSize::Int = 16,
     tileSize::Int = 128,
+    alpha::String = "01",
 )
     opt = ADAM()
+
+    imgfilename = "image_" * alpha
 
     dataDirs = getDataDirs(dataDir)
     @info "Training with data directories $(dataDirs)"
     @info "Batchsize $(batchSize)"
     @info "Tile size $(tileSize)"
+    @info "alpha $(alpha)"
 
-    satData = dataDirs .|> fp -> getSatelliteData(fp, tileSize)
-    xtrain = MultipleSatelliteData([first(sd) for sd in satData])
-    ytrain = MultipleSatelliteData([last(sd) for sd in satData])
-    dataLoader = MLU.DataLoader(
-        (xtrain, ytrain);
-        # parallel = true,
-        collate = true,
-        batchsize = batchSize,
-        shuffle = true,
-    )
-    @Flux.epochs 3 Flux.train!(loss, Flux.params(u), dataLoader, opt, cb = evalCallback(dataLoader))
+    for fp in dataDirs
+        @info "Processing $(fp)"
+        rs = RasterStack(
+            (
+                x -> joinpath(fp, x)
+            ).([
+                "VV_dB.tif",
+                "VH_dB.tif",
+                "bathymetry_processed.tif",
+                imgfilename * ".tif",
+            ]);
+            lazy = true,
+        )
+        tiles = load_object(joinpath(fp, "tiles_$(tileSize).jld2"))
+        nonemptyTs = partition(tiles.nonempty, batchSize)
+        @showprogress 1 "Processing tiles" for ts in nonemptyTs
+            data = TrainData[]
+            for t in ts
+                ret = zeros(Float32, tileSize, tileSize, 3, 1)
+                ret[:, :, 1, 1] = rs[:VV_dB].data[t..., 1]
+                ret[:, :, 2, 1] = rs[:VH_dB].data[t..., 1]
+                ret[:, :, 3, 1] = rs[:bathymetry_processed].data[t..., 1]
+                img =
+                    reshape(rs[Symbol(imgfilename)].data[t..., 1], tileSize, tileSize, 1, 1)
+                push!(data, (ret, img))
+            end
+            Flux.@epochs 3 Flux.train!(
+                loss,
+                Flux.params(u),
+                data,
+                opt,
+                cb = evalCallback(data),
+            )
+            empty!(data)
+        end
+    end
 
 end
-export trainUnet
-
 end #Train

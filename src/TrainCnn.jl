@@ -1,6 +1,5 @@
 module TrainCnn
 
-using UNet
 using Flux
 using CSV
 import DataFrames as DF
@@ -17,7 +16,8 @@ using ProgressMeter
 import MLUtils as MLU
 using Metalhead
 
-include("Utils.jl")
+using ..UNet
+using ..Utils
 
 function loss(x::Array{Float32,4}, y::Array{Float32,2})::Float64
     y_head = cnn(x)

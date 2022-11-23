@@ -12,6 +12,18 @@ function BatchNormWrap(out_ch)
     Chain(x -> expand_dims(x, 2), BatchNorm(out_ch), x -> squeeze(x))
 end
 
+expand_dims(x, n::Int) = reshape(x, ones(Int64, n)..., size(x)...)
+
+function squeeze(x)
+    if size(x)[end] != 1
+        return dropdims(x, dims = tuple(findall(size(x) .== 1)...))
+    else
+        # For the case BATCH_SIZE = 1
+        int_val = dropdims(x, dims = tuple(findall(size(x) .== 1)...))
+        return reshape(int_val, size(int_val)..., 1)
+    end
+end
+
 UNetConvBlock(in_chs, out_chs, kernel = (3, 3)) = Chain(
     Conv(kernel, in_chs => out_chs, pad = (1, 1); init = _random_normal),
     BatchNormWrap(out_chs),
@@ -56,6 +68,7 @@ struct Unet
     up_blocks::Any
 end
 
+export Unet
 @functor Unet
 
 function Unet(channels::Int = 1, labels::Int = channels)

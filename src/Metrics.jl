@@ -3,7 +3,7 @@ module Metrics
 using MLJBase
 using DataFrames
 
-function f1_V(csv::DataFrame, img::Array{Float32}, id::String, treshold::Float)::Float
+function f1_V(csv::DataFrame, img::Matrix{Float32}, id::String, treshold::Float32)::Float
     dropmissing!(csv, [:is_vessel])
     objects = @view csv[
         (csv.scene_id.==id).&(csv.confidence ∈ ["HIGH", "MEDIUM"]),
@@ -20,7 +20,7 @@ function f1_V(csv::DataFrame, img::Array{Float32}, id::String, treshold::Float):
 
 end
 
-function pe_L(l_head::Vector{Float32}, l::Vector{Float32})::Float
+function pe_L(l_head::Vector{Float32}, l::Vector{Float32})::Float32
     @assert length(l_head) == length(l)
 
     N = length(l)

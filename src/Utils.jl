@@ -2,15 +2,18 @@ module Utils
 
 using Pipe
 using Rasters
-
-include("UNet.jl")
+using TiledIteration
+using Base.Threads
+using ..UNet
 
 const Tile = Tuple{UnitRange{Int},UnitRange{Int}}
+export Tile
 
 mutable struct Tiles
     empty::Vector{Tile}
     nonempty::Vector{Tile}
 end
+export Tiles
 
 function Tiles()::Tiles
     Tiles([], [])
@@ -21,10 +24,40 @@ function getDataDirs(dataDir::String)::Vector{String}
     @pipe readdir(dataDir, join = true) |>
           filter(fp -> isdir(fp) && !endswith(fp, "shoreline"), _)
 end
+export getDataDirs
+
+function partitionTiles(fp::String, tileSize::Int)::Tiles
+    tilesPerThread = repeat([Tiles()], Threads.nthreads())
+    rs = RasterStack(
+        (
+            x -> joinpath(fp, x)
+        ).(["VV_dB.tif", "VH_dB.tif", "bathymetry_processed.tif", "image.tif"]);
+        lazy = true,
+    )
+    tiles = TileIterator(axes(@view rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
+    @threads for j in tiles
+        tId = Threads.threadid()
+        ts = tilesPerThread[tId]
+        t = @view rs[j..., 1]
+        if any(t[:image] .== 1.0)
+            push!(ts.nonempty, j)
+        else
+            push!(ts.empty, j)
+        end
+    end
+
+    res = Tiles()
+    for ts in tilesPerThread
+        append!(res.empty, ts.empty)
+        append!(res.nonempty, ts.nonempty)
+    end
+
+    return res
+end
 
 
 # Apply a Unet, returning all pixel coordinates above a given threshold.
-function applyU(u::UNet.Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
+function applyU(u::Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
     tiles = TileIterator(axes(rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
     x, y = size(rs[:VV_dB])[1], size(rs[:VV_dB])[2]
     img = zeros(Float32, x, y)
