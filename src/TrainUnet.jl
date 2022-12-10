@@ -2,36 +2,18 @@ module TrainUnet
 
 using Flux
 using CSV
-using DataFrames
 using JLD2: save_object, load_object
-using CUDA
-using Pipe
 using Base.Iterators
-using TiledIteration
 using Rasters
-using Plots
-using Base.Iterators: zip, partition
-import DimensionalData.Dimensions.LookupArrays as DD
 import Flux.Losses as L
-using LinearAlgebra
-using ThreadsX
 using LoopVectorization
-using ProgressMeter
-using Statistics
+using Statistics: mean
 using ..UNet
 using ..Utils
 import MLUtils as MLU
 
-
-function h(x)
-    clamp(x, 0.001, 1.0)
-end
-
-function weightedMean(xs, ws)
-    return mean(ws .* xs)
-end
-function loss(x, y)
-    y_head = h.(u(x))
+function loss(u, x, y)
+    y_head = sigmoid.(u(x))
     (xdim, ydim) = size(y)
     muS = xdim * ydim
     int_falpha = sum(y)
@@ -39,131 +21,23 @@ function loss(x, y)
     alpha = int_falpha > 0.0 ? muS / (2 * int_falpha) : 1.0
     beta = int_fbeta > 0.0 ? (alpha * int_falpha) / int_fbeta : 1.0
     ws = alpha * y .+ beta * (1.0 .- y)
-    return L.logitbinarycrossentropy(y_head, y; agg = xs -> weightedMean(xs, ws))
+    return L.binarycrossentropy(y_head, y; agg = xs -> mean(ws .* xs))
 end
 
 # we keep track of the evolution of the accuracy
 accuracy_history = Vector{Float32}(undef, 0)
-function accuracy(data::MLU.DataLoader)
-    x = mean(reduce(vcat, [first(data) for i = 1:20]) .|> x -> loss(x...))
+function accuracy(u::Unet, data::MLU.DataLoader)
+    x = mean(reduce(vcat, [first(data) for i = 1:20]) .|> x -> loss(u, x...))
     push!(accuracy_history, x)
     return x
 end
 
-function evalCallback(data::MLU.DataLoader)
+function evalCallback(u::Unet, data::MLU.DataLoader)
     Flux.throttle(60) do
-        acc = accuracy(data)
+        acc = accuracy(u, data)
         @info "Mean loss: $(acc)"
         save_object("model-checkpoint.jld2", u)
     end
-end
-
-function preprocessData(dataDir::String, tileSize::Int, alpha::Float32 = 0.1)
-    csv = CSV.read(joinpath(dataDir, "train.csv"), DataFrame)
-    dropmissing!(csv, [:is_vessel, :vessel_length_m])
-    for subDir in getDataDirs(dataDir)
-        preprocessDir(subDir, csv, tileSize)
-    end
-end
-
-function preprocessDir(
-    subDir::String,
-    csv::DataFrame,
-    tileSize::Int = 128,
-    alpha::Float32 = 0.1,
-)
-    @info "Processing " * subDir
-    id = last(splitpath(subDir))
-    # TODO also filter for confidence level with in(["MEDIUM", "HIGH"]).(csv.confidence)
-    vessels = @view csv[
-        (csv.scene_id.==id).&(csv.is_vessel.==true),
-        [:detect_scene_row, :detect_scene_column, :vessel_length_m],
-    ]
-    open(Raster(joinpath(subDir, "VV_dB.tif"))) do gaV
-        img = generateImage(gaV, vessels, alpha)
-        Rasters.write(joinpath(subDir, "image.tif"), img)
-
-        open(Raster(joinpath(subDir, "bathymetry.tif"))) do gaBat
-            gaBatPrim = resample(gaBat, to = gaV, method = :near)
-            gaV = nothing
-            Rasters.write(joinpath(subDir, "bathymetry_processed.tif"), gaBatPrim)
-        end
-    end
-    ts = partitionTiles(subDir, tileSize)
-    save_object("tiles_$(tileSize).jld2", ts)
-end
-
-function generateImage(
-    ga::Raster{Float32,3},
-    vessels::SubDataFrame,
-    alpha::Float32,
-)::Raster{Float32,3}
-    result = Raster(zeros(Float32, dims(ga)))
-    vs = [
-        (CartesianIndex(v.detect_scene_column, v.detect_scene_row), v.vessel_length_m)
-        for v in eachrow(vessels)
-    ]
-    result[:, :, 1] = ThreadsX.map(
-        i -> maximum(
-            v -> begin
-                sigma = alpha * v[2]
-                r = exp(-(norm((v[1] - i).I))^2 / (2 * sigma^2))
-                return r
-            end,
-            vs;
-            init = 0.0,
-        ),
-        CartesianIndices(result[:, :, 1]),
-    )
-    return result
-end
-
-# Plot a raster together with the marked vessel positions.
-function drawBoxes(
-    ga::Raster{Float32,3},
-    vessels::Vector{CartesianIndex{2}},
-    predicted_vessels::Vector{CartesianIndex{2}} = [],
-)::Plots.Plot
-    x_dim, y_dim = dims(ga)[1], dims(ga)[2]
-    x_sign = DD.order(x_dim) isa DD.ForwardOrdered ? 1 : -1
-    y_sign = DD.order(y_dim) isa DD.ForwardOrdered ? 1 : -1
-    (xbounds, ybounds, zbounds) = bounds(ga)
-    xbound = DD.order(x_dim) isa DD.ForwardOrdered ? xbounds[1] : xbounds[2]
-    ybound = DD.order(y_dim) isa DD.ForwardOrdered ? ybounds[1] : ybounds[2]
-    (xsize, ysize, zsize) = size(ga)
-    xfactor = (xbounds[2] - xbounds[1]) / xsize
-    yfactor = (ybounds[2] - ybounds[1]) / ysize
-    vessels_coords = [
-        (x_sign * xfactor, y_sign * yfactor) .* (v.I[1], v.I[2]) .+ (xbound, ybound) for
-        v in vessels
-    ]
-    p = plot(ga)
-    scatter!(
-        p,
-        vessels_coords;
-        legend = :none,
-        markercolor = :black,
-        markerstrokewidth = 10,
-        markerstrokealpha = 1.0,
-        markershape = :rect,
-        markeralpha = 0.6,
-    )
-    if !isempty(predicted_vessels)
-        predicted_vessels_coords = [
-            (x_sign * xfactor, y_sign * yfactor) .* (v.I[1], v.I[2]) .+ (xbound, ybound) for v in predicted_vessels
-        ]
-        scatter!(
-            p,
-            predicted_vessels_coords;
-            legend = :none,
-            markercolor = :red,
-            markerstrokewidth = 10,
-            markerstrokealpha = 1.0,
-            markershape = :rect,
-            markeralpha = 0.6,
-        )
-    end
-    return p
 end
 
 u = UNet.Unet(3, 1) |> cpu
@@ -231,6 +105,7 @@ end
 
 
 function trainUnet(
+    u::Unet,
     dataDir::String = "./data/train",
     batchSize::Int = 16,
     tileSize::Int = 128,
@@ -252,7 +127,9 @@ function trainUnet(
         batchsize = batchSize,
         shuffle = true,
     )
-    @Flux.epochs 3 Flux.train!(loss, Flux.params(u), dataLoader, opt, cb = evalCallback(dataLoader))
+    l(x, y) = loss(u, x, y)
+    cb(dl) = evalCallback(u, dl)
+    Flux.train!(l, Flux.params(u), dataLoader, opt, cb = cb(dataLoader))
 
 end
 export trainUnet
