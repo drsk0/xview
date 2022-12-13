@@ -26,36 +26,6 @@ function getDataDirs(dataDir::String)::Vector{String}
 end
 export getDataDirs
 
-function partitionTiles(fp::String, tileSize::Int)::Tiles
-    tilesPerThread = repeat([Tiles()], Threads.nthreads())
-    rs = RasterStack(
-        (
-            x -> joinpath(fp, x)
-        ).(["VV_dB.tif", "VH_dB.tif", "bathymetry_processed.tif", "image.tif"]);
-        lazy = true,
-    )
-    tiles = TileIterator(axes(@view rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
-    @threads for j in tiles
-        tId = Threads.threadid()
-        ts = tilesPerThread[tId]
-        t = @view rs[j..., 1]
-        if any(t[:image] .== 1.0)
-            push!(ts.nonempty, j)
-        else
-            push!(ts.empty, j)
-        end
-    end
-
-    res = Tiles()
-    for ts in tilesPerThread
-        append!(res.empty, ts.empty)
-        append!(res.nonempty, ts.nonempty)
-    end
-
-    return res
-end
-
-
 # Apply a Unet, returning all pixel coordinates above a given threshold.
 function applyU(u::Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
     tiles = TileIterator(axes(rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
@@ -66,7 +36,6 @@ function applyU(u::Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
     end
     return img
 end
-
 
 function applyU(u, rs::RasterStack, t::Tile)::Matrix{Float32}
     tileSize = length(t[1])

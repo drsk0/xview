@@ -106,11 +106,11 @@ end
 
 function trainUnet(
     u::Unet,
+    opt = ADAM(),
     dataDir::String = "./data/train",
     batchSize::Int = 16,
     tileSize::Int = 128,
 )
-    opt = ADAM()
 
     dataDirs = getDataDirs(dataDir)
     @info "Training with data directories $(dataDirs)"

@@ -112,7 +112,7 @@ function (u::Unet)(x::AbstractArray)
     up_x2 = u.up_blocks[2](up_x1, x2)
     up_x3 = u.up_blocks[3](up_x2, x1)
     up_x5 = u.up_blocks[4](up_x3, op)
-    tanh.(u.up_blocks[end](up_x5))
+    u.up_blocks[end](up_x5)
 end
 
 function Base.show(io::IO, u::Unet)

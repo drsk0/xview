@@ -4,6 +4,9 @@ using Rasters
 using LinearAlgebra
 using Plots
 using ThreadsX
+using Base.Threads
+using TiledIteration
+using JLD2
 import DimensionalData.Dimensions.LookupArrays as DD
 using ..Utils
 
@@ -25,12 +28,12 @@ function preprocessDir(
     id = last(splitpath(subDir))
     # TODO also filter for confidence level with in(["MEDIUM", "HIGH"]).(csv.confidence)
     vessels = @view csv[
-        (csv.scene_id.==id).&(csv.is_vessel.==true),
+        (csv.scene_id.==id).&(csv.is_vessel.!==missing) .& (csv.is_vessel.==true),
         [:detect_scene_row, :detect_scene_column, :vessel_length_m],
     ]
     open(Raster(joinpath(subDir, "VV_dB.tif"))) do gaV
         img = generateImage(gaV, vessels, alpha)
-        Rasters.write(joinpath(subDir, "image.tif"), img)
+        Rasters.write(joinpath(subDir, "image_"*alpha *".tif"), img)
 
         open(Raster(joinpath(subDir, "bathymetry.tif"))) do gaBat
             gaBatPrim = resample(gaBat, to = gaV, method = :near)
@@ -39,7 +42,7 @@ function preprocessDir(
         end
     end
     ts = partitionTiles(subDir, tileSize)
-    save_object("tiles_$(tileSize).jld2", ts)
+    save_object(joinpath(subDir, "tiles_$(tileSize).jld2"), ts)
 end
 
 function generateImage(
@@ -52,7 +55,7 @@ function generateImage(
         (CartesianIndex(v.detect_scene_column, v.detect_scene_row), v.vessel_length_m)
         for v in eachrow(vessels)
     ]
-    result[:, :, 1] = ThreadsX.map(
+    result[:, :, 1] = map(
         i -> maximum(
             v -> begin
                 sigma = alpha * v[2]
@@ -114,4 +117,35 @@ function drawBoxes(
     end
     return p
 end
+
+function partitionTiles(fp::String, tileSize::Int)::Utils.Tiles
+    tilesPerThread = repeat([Utils.Tiles()], Threads.nthreads())
+    rs = RasterStack(
+        (
+            x -> joinpath(fp, x)
+        ).(["VV_dB.tif", "VH_dB.tif", "bathymetry_processed.tif", "image_01.tif"]);
+        lazy = true,
+    )
+    tiles = TileIterator(axes(@view rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
+    @threads for j in tiles
+        tId = Threads.threadid()
+        ts = tilesPerThread[tId]
+        t = @view rs[j..., 1]
+        if any(t[:image_01] .== 1.0)
+            push!(ts.nonempty, j)
+        else
+            push!(ts.empty, j)
+        end
+    end
+
+    res = Utils.Tiles()
+    for ts in tilesPerThread
+        append!(res.empty, ts.empty)
+        append!(res.nonempty, ts.nonempty)
+    end
+
+    return res
+end
+export partitionTiles
+
 end #Preprocess
