@@ -13,14 +13,12 @@ using ..Utils
 import MLUtils as MLU
 
 function loss(u, x, y)
-    y_head = sigmoid.(u(x))
+    y_head = Flux.Function.sigmoid.(u(x))
     (xdim, ydim) = size(y)
     muS = xdim * ydim
     int_falpha = sum(y)
-    int_fbeta = muS - int_falpha
-    alpha = int_falpha > 0.0 ? muS / (2 * int_falpha) : 1.0
-    beta = int_fbeta > 0.0 ? (alpha * int_falpha) / int_fbeta : 1.0
-    ws = alpha * y .+ beta * (1.0 .- y)
+    alpha = int_falpha == 0.0 ? 0.0 : muS / int_falpha
+    ws = alpha * y
     return L.binarycrossentropy(y_head, y; agg = xs -> mean(ws .* xs))
 end
 
@@ -105,8 +103,8 @@ end
 
 
 function trainUnet(
-    u::Unet,
-    opt = ADAM(),
+    u::Unet = UNet.Unet(3, 1),
+    opt = Flux.Optimise.Adam(),
     dataDir::String = "./data/train",
     batchSize::Int = 16,
     tileSize::Int = 128,

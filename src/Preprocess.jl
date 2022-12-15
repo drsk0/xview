@@ -3,10 +3,10 @@ using DataFrames
 using Rasters
 using LinearAlgebra
 using Plots
-using ThreadsX
 using Base.Threads
 using TiledIteration
 using JLD2
+using CSV
 import DimensionalData.Dimensions.LookupArrays as DD
 using ..Utils
 
@@ -33,7 +33,7 @@ function preprocessDir(
     ]
     open(Raster(joinpath(subDir, "VV_dB.tif"))) do gaV
         img = generateImage(gaV, vessels, alpha)
-        Rasters.write(joinpath(subDir, "image_"*alpha *".tif"), img)
+        Rasters.write(joinpath(subDir, "image_$(alpha).tif"), img)
 
         open(Raster(joinpath(subDir, "bathymetry.tif"))) do gaBat
             gaBatPrim = resample(gaBat, to = gaV, method = :near)
@@ -79,7 +79,7 @@ function drawBoxes(
     x_dim, y_dim = dims(ga)[1], dims(ga)[2]
     x_sign = DD.order(x_dim) isa DD.ForwardOrdered ? 1 : -1
     y_sign = DD.order(y_dim) isa DD.ForwardOrdered ? 1 : -1
-    (xbounds, ybounds, zbounds) = bounds(ga)
+    (xbounds, ybounds, _) = bounds(ga)
     xbound = DD.order(x_dim) isa DD.ForwardOrdered ? xbounds[1] : xbounds[2]
     ybound = DD.order(y_dim) isa DD.ForwardOrdered ? ybounds[1] : ybounds[2]
     (xsize, ysize, zsize) = size(ga)
