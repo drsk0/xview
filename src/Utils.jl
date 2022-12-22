@@ -37,6 +37,7 @@ function applyU(u::Unet, rs::RasterStack, tileSize::Int)::Matrix{Float32}
     end
     return img
 end
+export applyU
 
 function applyU(u, rs::RasterStack, t::Tile)::Matrix{Float32}
     tileSize = length(t[1])
@@ -59,6 +60,7 @@ function applyU(u, rs::RasterStack, t::Tile)::Matrix{Float32}
         1,
     ]
 end
+export applyU
 
 function partitionTiles(fp::String, objects::SubDataFrame, tileSize::Int)::Utils.Tiles
     rs = Raster(joinpath(fp, "VV_dB.tif"), lazy=true)
