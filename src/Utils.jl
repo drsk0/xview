@@ -4,6 +4,7 @@ using Pipe
 using Rasters
 using TiledIteration
 using Base.Threads
+using DataFrames
 using ..UNet
 
 const Tile = Tuple{UnitRange{Int},UnitRange{Int}}
@@ -11,7 +12,7 @@ export Tile
 
 mutable struct Tiles
     empty::Vector{Tile}
-    nonempty::Vector{Tile}
+    nonempty::Vector{Tuple{Tile, Vector{CartesianIndex}}}
 end
 export Tiles
 
@@ -58,5 +59,25 @@ function applyU(u, rs::RasterStack, t::Tile)::Matrix{Float32}
         1,
     ]
 end
+
+function partitionTiles(fp::String, objects::SubDataFrame, tileSize::Int)::Utils.Tiles
+    rs = Raster(joinpath(fp, "VV_dB.tif"), lazy=true)
+    vs = [CartesianIndex(v.detect_scene_column, v.detect_scene_row) for v in eachrow(objects)]
+    tiles = TileIterator(axes(@view rs[:, :, 1]), RelaxStride((tileSize, tileSize)))
+
+    nonempty = []
+    empty = []
+    for t ∈ tiles
+        os = [v for v ∈ vs if (v.I[1] ∈ t[1] && v.I[2] ∈ t[2])]
+        if !isempty(os)
+            push!(nonempty, (t, os))
+        else
+            push!(empty, t)
+        end
+    end
+
+    return Utils.Tiles(empty, nonempty)
+end
+export partitionTiles
 
 end #Utils

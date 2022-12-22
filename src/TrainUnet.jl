@@ -7,19 +7,20 @@ using Base.Iterators
 using Rasters
 import Flux.Losses as L
 using LoopVectorization
+using DataFrames
 using Statistics: mean
 using ..UNet
 using ..Utils
 import MLUtils as MLU
 
 function loss(u, x, y)
-    y_head = Flux.Function.sigmoid.(u(x))
+    y_head = sigmoid.(u(x))
     (xdim, ydim) = size(y)
     muS = xdim * ydim
     int_falpha = sum(y)
     alpha = int_falpha == 0.0 ? 0.0 : muS / int_falpha
     ws = alpha * y
-    return L.binarycrossentropy(y_head, y; agg = xs -> mean(ws .* xs))
+    return L.binarycrossentropy(y_head, y; agg=xs -> mean(ws .* xs))
 end
 
 # we keep track of the evolution of the accuracy
@@ -47,21 +48,28 @@ struct SatelliteData
 end
 export SatelliteData
 
-function getSatelliteData(fp::String, tileSize::Int)::Tuple{SatelliteData,SatelliteData}
-    ts = load_object(joinpath(fp, "tiles_$(tileSize).jld2"))
+function getSatelliteData(fp::String, csv::DataFrame, tileSize::Int)::Tuple{SatelliteData,SatelliteData}
+    id = last(splitpath(fp))
+    objects = @view csv[
+        (csv.scene_id.==id).&(csv.confidence .∈ [["HIGH", "MEDIUM"]]),
+        [:is_vessel, :detect_scene_row, :detect_scene_column],
+    ]
+    ts = partitionTiles(fp, objects, tileSize)
+    @info "Non-empty tiles for $(id): $(length(ts.nonempty))"
+
     return (
         SatelliteData(
             RasterStack(
                 (
                     x -> joinpath(fp, x)
                 ).(["VV_dB.tif", "VH_dB.tif", "bathymetry_processed.tif"]);
-                lazy = true,
+                lazy=true
             ),
             ts,
             tileSize,
         ),
         SatelliteData(
-            RasterStack([joinpath(fp, "image_01.tif")]; lazy = true),
+            RasterStack([joinpath(fp, "image_01.tif")]; lazy=true),
             ts,
             tileSize,
         ),
@@ -73,7 +81,7 @@ function MLU.numobs(sd::SatelliteData)
 end
 
 function MLU.getobs(sd::SatelliteData, i::Int)
-    t = sd.tiles.nonempty[i]
+    t = first(sd.tiles.nonempty[i])
     ret = zeros(Float32, sd.tileSize, sd.tileSize, length(sd.rs))
     for (i, layer) in enumerate(propertynames(sd.rs.layermetadata))
         ret[:, :, i] = sd.rs[layer].data[t..., 1]
@@ -103,11 +111,11 @@ end
 
 
 function trainUnet(
-    u::Unet = UNet.Unet(3, 1),
-    opt = Flux.Optimise.Adam(),
-    dataDir::String = "./data/train",
-    batchSize::Int = 16,
-    tileSize::Int = 128,
+    u::Unet=UNet.Unet(3, 1),
+    opt::Adam=Flux.Optimise.Adam(),
+    dataDir::String="./data/train",
+    batchSize::Int=16,
+    tileSize::Int=128,
 )
 
     dataDirs = getDataDirs(dataDir)
@@ -115,19 +123,22 @@ function trainUnet(
     @info "Batchsize $(batchSize)"
     @info "Tile size $(tileSize)"
 
-    satData = dataDirs .|> fp -> getSatelliteData(fp, tileSize)
+    csv = CSV.read(joinpath(dataDir, "train.csv"), DataFrame)
+    dropmissing!(csv, :is_vessel)
+
+    satData = dataDirs .|> fp -> getSatelliteData(fp, csv, tileSize)
     xtrain = MultipleSatelliteData([first(sd) for sd in satData])
     ytrain = MultipleSatelliteData([last(sd) for sd in satData])
     dataLoader = MLU.DataLoader(
         (xtrain, ytrain);
         # parallel = true,
-        collate = true,
-        batchsize = batchSize,
-        shuffle = true,
+        collate=true,
+        batchsize=batchSize,
+        shuffle=true
     )
     l(x, y) = loss(u, x, y)
     cb(dl) = evalCallback(u, dl)
-    Flux.train!(l, Flux.params(u), dataLoader, opt, cb = cb(dataLoader))
+    Flux.train!(l, Flux.params(u), dataLoader, opt, cb=cb(dataLoader))
 
 end
 export trainUnet
