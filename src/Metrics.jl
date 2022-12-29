@@ -9,7 +9,7 @@ using ..Utils
 using ..UNet
 using ..Preprocess
 
-function f1_V(fp::String, csv::DataFrame, u::Unet, treshold::Float32)::Float32
+function vessel_classify(fp::String, csv::DataFrame, u::Unet, treshold::Float32)
     id = last(splitpath(fp))
     dropmissing!(csv, :is_vessel)
     objects = @view csv[
@@ -30,15 +30,21 @@ function f1_V(fp::String, csv::DataFrame, u::Unet, treshold::Float32)::Float32
 
     y = [o[:is_vessel] ? 1.0 : 0.0 for o in eachrow(objects)]
 
-    y_head = [
+    ŷ = [
         begin
             coord = CartesianIndex(o.detect_scene_column, o.detect_scene_row)
             t = objectToTile[coord]
-            (applyU(u, r, t).|>sigmoid)[coord - CartesianIndex(t[1].start - 1, t[2].start - 1)] > treshold ? 1.0 : 0.0
+            (applyU(u, r, t).|>sigmoid)[coord-CartesianIndex(t[1].start - 1, t[2].start - 1)] > treshold ? 1.0 : 0.0
         end
-        for o ∈ eachrow(objects) 
+        for o ∈ eachrow(objects)
     ]
+    return (ŷ, y)
+end
 
-    return f1score(y_head, y)
+function vessel_classify(fps::Vector{String}, csv::DataFrame, u::Unet, treshold::Float32)::Tuple{Vector{Float32}, Vector{Float32}}
+    vs = [vessel_classify(fp, csv, u, treshold) for fp ∈ fps]
+    ŷ = vcat([ŷ for (ŷ, _) ∈ vs]...)
+    y = vcat([y for (_, y) ∈ vs]...)
+    return (ŷ, y)
 end
 end
