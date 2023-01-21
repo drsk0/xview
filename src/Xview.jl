@@ -1,7 +1,5 @@
 include("UNet.jl")
 include("Utils.jl")
 include("TrainUnet.jl")
-include("TrainCnn.jl")
-include("TrainVit.jl")
 include("Preprocess.jl")
 include("Metrics.jl")
