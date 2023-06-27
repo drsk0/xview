@@ -35,6 +35,11 @@ trained and image distribution for each pixel is taken. The weights are choosen
 such that the far bigger occurence of pixels not containing any vessels is
 balanced.
 
+Here is a full training scene with generated image and the three used bands:
+
+![scene](https://github.com/drsk0/xview/assets/827698/685744dd-bffd-4e8c-a4cf-6efa70a4a872)
+
+
 Training
 --------
 
