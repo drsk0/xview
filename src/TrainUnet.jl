@@ -5,6 +5,7 @@ using CSV
 using JLD2: save_object, load_object
 using Base.Iterators
 using Rasters
+using ArchGDAL
 import Flux.Losses as L
 using LoopVectorization
 using DataFrames
@@ -83,7 +84,7 @@ end
 function MLU.getobs(sd::SatelliteData, i::Int)
     t = first(sd.tiles.nonempty[i])
     ret = zeros(Float32, sd.tileSize, sd.tileSize, length(sd.rs))
-    for (i, layer) in enumerate(propertynames(sd.rs.layermetadata))
+    for (i, layer) in enumerate(propertynames(sd.rs))
         ret[:, :, i] = sd.rs[layer].data[t..., 1]
     end
     return ret
