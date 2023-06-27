@@ -39,7 +39,6 @@ Here is a full training scene with generated image and the three used bands:
 
 ![scene](https://github.com/drsk0/xview/assets/827698/45e2358b-8a7d-49a3-9b7a-8024dc660f24)
 
-
 Training
 --------
 
@@ -56,6 +55,10 @@ We only train the UNet with tiles containing at least one vessel and use a
 batch size of 16 tiles.
 
 We use the ADAM optimizer with default parameters.
+
+Here is one of the generated tiles containing a vessel:
+
+![tile](https://github.com/drsk0/xview/assets/827698/b8743414-416c-47bb-850b-9680ed09029c)
 
 Optimizations
 -------------
