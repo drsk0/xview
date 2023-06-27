@@ -37,7 +37,7 @@ balanced.
 
 Here is a full training scene with generated image and the three used bands:
 
-![scene](https://github.com/drsk0/xview/assets/827698/685744dd-bffd-4e8c-a4cf-6efa70a4a872)
+![scene](https://github.com/drsk0/xview/assets/827698/45e2358b-8a7d-49a3-9b7a-8024dc660f24)
 
 
 Training
