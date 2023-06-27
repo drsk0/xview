@@ -13,8 +13,8 @@ different deep neural network architectures on this problem.
 Approach 1
 ---------
 
-This solution is based on a UNet architecture https://arxiv.org/
-pdf/1505.04597.pdf. UNet's have been very succesfully applied to the task of
+This solution is based on a UNet architecture https://arxiv.org/pdf/1505.04597.pdf. 
+UNet's have been very succesfully applied to the task of
 medical image segmentation. The idea is that their ability to detect small
 changes in structure of medical images should also apply to very small objects
 in satellite images.
