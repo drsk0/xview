@@ -76,8 +76,13 @@ xview challenge.
 
 Results
 -------
+A typical prediction from the model after 5 epochs of training.
 
-TODO
+![predict](https://github.com/drsk0/xview/assets/827698/f710e420-934d-412c-af08-ad736e0d4683)
+
+The confidence in the prediction of the model is quite low. The weighting per 
+pixel in the loss function might still be off.
+
 
 
 Approach 2
