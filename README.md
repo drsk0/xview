@@ -76,21 +76,29 @@ xview challenge.
 
 Results
 -------
-A typical prediction of the model after 5 epochs of training.
+A typical prediction of the model after 5 epochs of training:
 
 ![predict](https://github.com/drsk0/xview/assets/827698/f710e420-934d-412c-af08-ad736e0d4683)
+
+And its corresponding ground truth: 
+
+![predict_groundtruth](https://github.com/drsk0/xview/assets/827698/a01f29c6-fdad-4ef7-a625-197e06b26109)
+
+(The plot implementations for Rasters and arrays have different orderings of one
+of the axis)
+
+The f1-score with a threshold of 0.25 on the validation dataset is 0.74.
+
+A few insights:
+
+  - A f1-score of 0.74 for the vanilla model is ok, but not impressive.
+  - The model has high uncertainty for the boundaries of the tiles.
+  - The threshold of 0.25 seems pretty low. The f1-score for higher thresholds, say 0.7, are very close however.
+  - More data doesn't seem to improve the model significantly.
+
 
 Approach 2
 ----------
 
-This approach uses only the UNet encoder chain. Instead of prediction a
-distribution for the probability of a vessel for a single pixel, the encoder
-should learn to encode the tile as a triple of (x coordinate, y coordinate,
-vessel length), where a negative vessel length indicates the abscence of a
-vessel in the tile.
-
-Approach 3 / 4
---------------
-
-These approaches are similar to approach 1 and 2, but replace the UNet model
-with a transformer model.
+It would be interesting to see whether a transformer outperforms the UNet on
+this task.

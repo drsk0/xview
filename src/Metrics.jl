@@ -9,7 +9,11 @@ using ..Utils
 using ..UNet
 using ..Preprocess
 
-function vessel_classify(fp::String, csv::DataFrame, u::Unet, treshold::Float32)
+
+"""
+Note: be sure to use thresholds of type Float32, i.e. 0.5f0 and not 0.5f32 to get correct results.    
+"""
+function vessel_classify(fp::String, csv::DataFrame, u::Unet, threshold::Float32)
     id = last(splitpath(fp))
     dropmissing!(csv, :is_vessel)
     objects = @view csv[
@@ -34,7 +38,7 @@ function vessel_classify(fp::String, csv::DataFrame, u::Unet, treshold::Float32)
         begin
             coord = CartesianIndex(o.detect_scene_column, o.detect_scene_row)
             t = objectToTile[coord]
-            (applyU(u, r, t).|>sigmoid)[coord-CartesianIndex(t[1].start - 1, t[2].start - 1)] > treshold ? 1.0 : 0.0
+            (applyU(u, r, t) .|> sigmoid)[coord - CartesianIndex(t[1].start - 1, t[2].start - 1)] > threshold ? 1.0 : 0.0
         end
         for o ∈ eachrow(objects)
     ]

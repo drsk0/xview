@@ -1,5 +1,6 @@
 .direnv/*
 data/*
+figures/*
 model-checkpoint*
 
 # Devenv
